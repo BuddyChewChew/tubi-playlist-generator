@@ -1,0 +1,72 @@
+name: Update Tubi TV Playlist
+
+on:
+  schedule:
+    - cron: '0 */8 * * *'  # Run every 8 hours
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  update-playlist:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 1  # Shallow clone to minimize history
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run playlist generator
+      run: |
+        python tubi_playlist_generator.py
+        # Check if files were generated
+        if [ ! -f "tubi_playlist.m3u" ] || [ ! -f "tubi_epg.xml" ]; then
+          echo "Error: Failed to generate playlist or EPG files"
+          exit 1
+        fi
+      continue-on-error: true  # Continue even if script fails
+
+    - name: Configure Git
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+
+    - name: Check for changes and commit
+      run: |
+        if [ -f "tubi_playlist.m3u" ] && [ -f "tubi_epg.xml" ]; then
+          # Stage any changes, including deletions
+          git add -A
+          
+          # Commit and push if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            timestamp=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            git commit -m "Update playlist and EPG data - ${timestamp}"
+            git push
+          fi
+        else
+          echo "Warning: Playlist or EPG files not found. Skipping commit."
+        fi
+
+    - name: Clean up history (only if files exist)
+      if: success() && hashFiles('tubi_playlist.m3u') && hashFiles('tubi_epg.xml')
+      run: |
+        # Create a new branch with only the latest files
+        git checkout --orphan temp_branch
+        git add -A
+        git commit -m "Latest playlist data"
+        
+        # Safely switch branches
+        git branch -D main || true
+        git branch -m main
+        git push -f origin main
